@@ -1,0 +1,393 @@
+---
+title: "methylkey2"
+format: 
+  html :
+    code-fold: false
+    code-summary: "Show the code"
+    code-tools: true
+    toc: true
+    toc-location: left
+    toc-title: Results
+    toc-depth: 4
+    page-layout: full
+    lightbox: true
+    self-contained: true
+keep-md: true
+editor: visual
+theme:
+  light: cosmo
+  dark: darkly
+execute:
+  warning: false
+  error: false
+params:
+  idat: "idat/"
+  sampleSheet: "sampleSheet.txt"
+  prepcode : "QCDPB"
+  groups : !expr c("class","sentrix_id","sentrix_position","inferedsex","plate_id")
+  genome : "hg38"
+---
+
+```{r setup, include=FALSE}
+setwd("Y:/diffAnalysis")
+```
+
+```{r}
+library(readr)
+library(DT)
+library(knitr)
+library(methylkey)
+library(limma) ibrary(minfi)
+library(tidyverse)
+library(parallel)
+library(doParallel)
+```
+
+```{r}
+annot <- read_csv("Y:/Methylome data/infinium-methylationepic-v-1-0-b5-manifest-file.csv",skip = 7)
+```
+
+```{r}
+meth <- readRDS("Y:/diffAnalysis/meth_Arian_new.rds")
+```
+
+```{r}
+meth@colData$class <- as.factor(meth@colData$class)
+```
+
+```{r}
+#methMsva <- readRDS("Y:/diffAnalysis/meth_Arian_new.rds")
+```
+
+```{r}
+methM<- getMvals(meth,  grp="class", sva="~class", win=TRUE, sex=FALSE)
+mvals <- getMvals(methM)
+```
+
+```{r}
+# Save methM object
+saveRDS(methM, file = "methM-sva.rds")
+```
+
+```{r}
+#| output: asis
+for(grp in params$groups){
+  cat("\n\n#### ", grp, "\n\n")
+  grp = colData(methM) %>% dplyr::pull(tolower(grp))
+  p <- my_scatterPlot(mvals, grp, methylkey::samples(methM), "npg", 1, TRUE, TRUE)
+  print(p)
+}
+```
+
+```{r}
+pdata <- colData(methM) %>% dplyr::select(samples,sentrix_position,sentrix_id,class,inferedsex,plate_id)
+pca   <- makepca(mvals, pdata, nPC=9)
+plot_PCA_contribution(pca, nPC=9)
+```
+
+```{r}
+dfp <- estimate_PCA_corr(pca, pdata, nPC=9)
+dfq <- apply(dfp, 2, p.adjust, method = "fdr") %>% matrix(nrow = nrow(dfp), dimnames = dimnames(dfp))
+dfq %>% DT::datatable()
+```
+
+```{r}
+#| results: asis
+for(grp in tolower(params$groups) ){
+  cat("\n\n#### ", grp, "\n\n")
+  factoextra::fviz_pca_ind(pca, axes=c(1,2), habillage=colData(methM) %>% dplyr::pull(tolower(grp)), addEllipses=TRUE ) %>% print()
+}
+```
+
+```{r}
+#methM@colData$class <- as.factor(methM@colData$class)
+```
+
+```{r}
+#model
+mrs <- MethylResultSet(
+  se = methM,
+  model = "~class",
+  intercept = "0",
+  method = "robust"
+)
+```
+
+```{r}
+#BiocManager::install("ENmix")
+```
+
+###CLASS1
+
+```{r}
+intercept="0" # required by dmps.qmd
+
+mrs@manifest = DataFrame(left_join(as_tibble(mrs@manifest), 
+                                 annot, 
+                                 by = c("Probe_ID" = "IlmnID")))
+
+# Get results
+result <- getResults(mrs, "class1", tools=c("dmrcate","ipdmr"))
+```
+
+```{r}
+index= "class1"
+```
+
+```{r}
+dmps<-getDMPs(mrs,index)
+nbdmps<-dmps %>% 
+  filter(adj.P.Val<0.05) %>%
+  nrow()
+print(nbdmps)
+```
+
+```{r}
+dmps %>% dplyr::filter(adj.P.Val<0.05) %>% 
+
+  arrange(adj.P.Val) %>% head(10) %>%
+
+  DT::datatable()
+ 
+```
+
+```{r}
+qqman::qq(dmps$P.Value,main=paste0("QQ plot: ","lambda=", mrs@lambda[[index]]))
+```
+
+```{r}
+volcano( dmps )
+```
+
+```{r}
+significant_dmps <- dmps %>% 
+  filter(adj.P.Val < 0.05) %>%
+  arrange(adj.P.Val)
+```
+
+```{r}
+#circosplot( getDMPranges(mrs,group=index,q=0.05), params$genome )
+```
+
+###CLASS2
+
+```{r}
+intercept="0" # required by dmps.qmd
+
+mrs@manifest = DataFrame(left_join(as_tibble(mrs@manifest), 
+                                 annot, 
+                                 by = c("Probe_ID" = "IlmnID")))
+
+# Get results
+result2 <- getResults(mrs, "class2", tools=c("dmrcate","ipdmr"))
+```
+
+```{r}
+index2= "class2"
+dmps2<-getDMPs(mrs,index2)
+nbdmps2<-dmps2 %>% 
+  filter(adj.P.Val<0.05) %>%
+  nrow()
+print(nbdmps2)
+```
+
+```{r}
+dmps2 %>% dplyr::filter(adj.P.Val<0.05) %>% 
+
+  arrange(adj.P.Val) %>% head(100) %>%
+
+  DT::datatable()
+ 
+```
+
+```{r}
+significant_dmps2 <- dmps2 %>% 
+  filter(adj.P.Val < 0.05) %>%
+  arrange(adj.P.Val)
+```
+
+```{r}
+#write.csv(significant_dmps2, "significant_dmps2.csv")
+```
+
+```{r}
+qqman::qq(dmps2$P.Value,main=paste0("QQ plot: ","lambda=", mrs@lambda[[index]]))
+```
+
+```{r}
+volcano( dmps2 )
+```
+
+###CLASS3
+
+```{r}
+intercept="0" # required by dmps.qmd
+
+mrs@manifest = DataFrame(left_join(as_tibble(mrs@manifest), 
+                                 annot, 
+                                 by = c("Probe_ID" = "IlmnID")))
+
+# Get results
+result3 <- getResults(mrs, "class3", tools=c("dmrcate","ipdmr"))
+```
+
+```{r}
+index3= "class3"
+dmps3<-getDMPs(mrs,index3)
+nbdmps3<-dmps3 %>% 
+  filter(adj.P.Val<0.05) %>%
+  nrow()
+print(nbdmps3)
+```
+
+```{r}
+dmps3 %>% dplyr::filter(adj.P.Val<0.05) %>% 
+
+  arrange(adj.P.Val) %>% head(100) %>%
+
+  DT::datatable()
+```
+
+```{r}
+significant_dmps3 <- dmps3 %>% 
+  filter(adj.P.Val < 0.05) %>%
+  arrange(adj.P.Val)
+```
+
+```{r}
+#write.csv(significant_dmps3, "significant_dmps3.csv")
+```
+
+```{r}
+qqman::qq(dmps3$P.Value,main=paste0("QQ plot: ","lambda=", mrs@lambda[[index]]))
+```
+
+`{write.csv(significant_dmps, "significant_dmps.csv")}`
+
+```{r}
+#rm(annotated,myannotation)
+```
+
+```{r}
+searchDMR_dmrcate<-function(dmps, fdr=0.05, maxgap=1000,pcutoff=0.05,genome="hg38"){
+  
+  if (!requireNamespace("DMRcate", quietly = TRUE)) {
+    stop("Package 'DMRcate' is required for this function to work. Please install it.")
+  }
+  require(DMRcate)
+  
+  dmps <- dmps %>% dplyr::filter(!str_detect(chr, "_"))
+  
+  annotated <- data.frame(chr=dmps$chr, start=dmps$pos, end=dmps$pos, strand=dmps$strand,
+        rawpval=dmps$P.Value, stat=dmps$t, diff= dmps$deltabetas, ind.fdr=dmps$adj.P.Val, is.sig=(dmps$adj.P.Val<fdr) )
+  annotated<-GenomicRanges::makeGRangesFromDataFrame(annotated, keep.extra.columns=TRUE)
+  names(annotated)<-dmps$Probe_ID
+  myannotation <- new("CpGannotated", ranges=sort(annotated))
+  if( sum(is.na(myannotation@ranges$diff)) ){ myannotation@ranges$diff[ which(is.na(myannotation@ranges$diff)) ] <- 0 }
+  
+  dmrcoutput<- DMRcate::dmrcate(myannotation,C=2, pcutoff=pcutoff, lambda = maxgap)
+  table <- DMRcate::extractRanges(dmrcoutput, genome = genome)
+  
+  overlap <- GenomicRanges::findOverlaps(annotated,table,type="within")
+  #table <- as.data.frame(table)[subjectHits(overlap),c("seqnames","start","end","HMFDR","no.cpgs")]
+  table <- as.data.frame(table)[subjectHits(overlap),c("seqnames","start","end","HMFDR","min_smoothed_fdr","no.cpgs")]
+  table$HMFDR <- table$min_smoothed_fdr
+
+  dmps[queryHits(overlap),] %>% bind_cols( table )
+}
+```
+
+```{r}
+#write.csv(resultsDMRs12,"significant_test1.csv")
+```
+
+```{r}
+resultsDMRs2 <- searchDMR_dmrcate(
+  dmps = dmps2,
+  fdr = 0.05,        # custom FDR threshold
+  maxgap = 1000,     # custom max gap between CpGs
+  pcutoff = 0.05,     # custom p-value cutoff
+  genome = "hg38"    # specify genome build
+)
+```
+
+```{r}
+colnames(resultsDMRs)
+```
+
+```{r}
+resultsDMRsFinal_class2 <- resultsDMRs2[, c(
+    "Probe_ID", "AveExpr", "t", "P.Value", "adj.P.Val", "B", "Coefficient", 
+    "Stdev", "goodness", "deltabetas", "status", "chr", "pos", "strand", 
+    "UCSC_RefGene_Name.x", "UCSC_RefGene_Group.x", "Relation_to_UCSC_CpG_Island.x", 
+    "CHR.x", "seqnames", "start", "end", "HMFDR", "min_smoothed_fdr", "no.cpgs"
+)]
+
+```
+
+```{r}
+write.csv(resultsDMRsFinal_class3,"cleanedDMRs_class3.csv")
+```
+
+```{r}
+searchDM<-function(dmps, maxgap=1000, bin.size=310, seed=0.05){
+  
+  if (!requireNamespace("ENmix", quietly = TRUE)) {
+    stop("Package 'ENmix' is required for this function to work. Please install it.")
+  }
+  
+  require(ENmix)
+  
+  data=data.frame(probe=dmps$Probe_ID,p=dmps$P.Value,chr=dmps$chr,start=dmps$pos,end=dmps$pos)
+  data$p[is.na(data$p)]<-0.99999
+
+  ipdmr<-data.frame(chr=character(),start=numeric(),end=numeric(),p=numeric(),fdr=numeric(),nprobe=numeric(),probe=character())
+  write_csv(ipdmr,"resu_ipdmr.csv") # avoid to reload previous results if ipdmr find 0 dmrs.
+  ipdmr(data, dist.cutoff=maxgap, bin.size=bin.size, seed=seed, region_plot=FALSE, mht_plot=FALSE, verbose=FALSE)
+  dmrs=readr::read_csv("resu_ipdmr.csv")
+  
+  return(dmrs)
+}
+```
+
+```{r}
+ipdmr3 <- searchDMR_ipdmr(
+  dmps=dmps3)
+```
+
+```{r}
+# Filter for significant cpgs (for DMR) based on FDR
+significant_cpgs2 <- resultsDMRsFinal_class2 %>%
+  filter(min_smoothed_fdr < 0.05)
+```
+
+```{r}
+# Table with DMRs only
+dmrs_final_class2 <- significant_cpgs2 %>%
+  group_by(seqnames, start, end) %>%  # Group by location instead of ID
+  summarise(
+    meandiff = mean(deltabetas, na.rm = TRUE),
+    maxdiff = max(deltabetas, na.rm = TRUE),
+    genesUniq = paste(unique(UCSC_RefGene_Name.x), collapse = ";"),
+    geneNames = paste(unique(UCSC_RefGene_Name.x), collapse = ";"),
+    fdr = first(min_smoothed_fdr),  # Using min_smoothed_fdr instead of fdr
+    dmrtool = "dmrcate",  # Added this line with fixed value "dmrcate"
+    direction = ifelse(mean(deltabetas, na.rm = TRUE) > 0, "hyper", "hypo")
+  ) %>%
+  ungroup() %>%
+  mutate(ID = paste0("DMR_", row_number()))
+```
+
+```{r}
+write.csv(dmrs_final_class3,"DMRsFinal_class3.csv")
+```
+
+```{r}
+dmrs_final_class1 %>% dplyr::filter(fdr<0.05) %>% 
+  arrange(fdr) %>% head(100) %>%
+  DT::datatable()
+```
+
+```{r}
+my_density(dmrs_final_class1)
+```
